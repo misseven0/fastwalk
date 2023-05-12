@@ -6,7 +6,6 @@ package fastwalk_test
 
 import (
 	"bytes"
-	"fastwalk"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -18,7 +17,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	// "golang.org/x/tools/internal/fastwalk"
+
+	"github.com/misseven0/fastwalk"
 )
 
 func TestFastWalk2(t *testing.T) {
