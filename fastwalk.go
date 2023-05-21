@@ -7,6 +7,7 @@
 package fastwalk
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -49,6 +50,10 @@ var ErrSkipFiles = errors.New("fastwalk: skip remaining files in directory")
 //     sentinel error. It is the walkFn's responsibility to prevent
 //     fastWalk from going into symlink cycles.
 func Walk(root string, walkFn func(path string, typ os.FileMode) error) error {
+	return WalkWithContext(context.TODO(), root, walkFn)
+}
+
+func WalkWithContext(ctx context.Context, root string, walkFn func(path string, typ os.FileMode) error) error {
 	// TODO(bradfitz): make numWorkers configurable? We used a
 	// minimum of 4 to give the kernel more info about multiple
 	// things we want, in hopes its I/O scheduling can take
@@ -57,6 +62,9 @@ func Walk(root string, walkFn func(path string, typ os.FileMode) error) error {
 	numWorkers := 4
 	if n := runtime.NumCPU(); n > numWorkers {
 		numWorkers = n
+	}
+	if ctx == nil {
+		ctx = context.TODO()
 	}
 
 	// Make sure to wait for all workers to finish, otherwise
@@ -91,6 +99,8 @@ func Walk(root string, walkFn func(path string, typ os.FileMode) error) error {
 			workItem = todo[len(todo)-1]
 		}
 		select {
+		case <-ctx.Done():
+			return errors.New("canceled by context")
 		case workc <- workItem:
 			todo = todo[:len(todo)-1]
 			out++
