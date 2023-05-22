@@ -24,6 +24,8 @@ var ErrTraverseLink = errors.New("fastwalk: traverse symlink, assuming target is
 // Child directories will still be traversed.
 var ErrSkipFiles = errors.New("fastwalk: skip remaining files in directory")
 
+var ErrCanceledByContext = errors.New("fastwalk: canceled by context")
+
 // Walk is a faster implementation of filepath.Walk.
 //
 // filepath.Walk's design necessarily calls os.Lstat on each file,
@@ -50,7 +52,7 @@ var ErrSkipFiles = errors.New("fastwalk: skip remaining files in directory")
 //     sentinel error. It is the walkFn's responsibility to prevent
 //     fastWalk from going into symlink cycles.
 func Walk(root string, walkFn func(path string, typ os.FileMode) error) error {
-	return WalkWithContext(context.TODO(), root, walkFn)
+	return WalkWithContext(context.Background(), root, walkFn)
 }
 
 func WalkWithContext(ctx context.Context, root string, walkFn func(path string, typ os.FileMode) error) error {
@@ -64,7 +66,7 @@ func WalkWithContext(ctx context.Context, root string, walkFn func(path string, 
 		numWorkers = n
 	}
 	if ctx == nil {
-		ctx = context.TODO()
+		return errors.New("fastwalk: nil Context")
 	}
 
 	// Make sure to wait for all workers to finish, otherwise
@@ -91,38 +93,43 @@ func WalkWithContext(ctx context.Context, root string, walkFn func(path string, 
 	todo := []walkItem{{dir: root}}
 	out := 0
 	for {
-		workc := w.workc
-		var workItem walkItem
-		if len(todo) == 0 {
-			workc = nil
-		} else {
-			workItem = todo[len(todo)-1]
-		}
 		select {
 		case <-ctx.Done():
-			return errors.New("canceled by context")
-		case workc <- workItem:
-			todo = todo[:len(todo)-1]
-			out++
-		case it := <-w.enqueuec:
-			todo = append(todo, it)
-		case err := <-w.resc:
-			out--
-			if err != nil {
-				return err
+			return ErrCanceledByContext
+		default:
+			workc := w.workc
+			var workItem walkItem
+			if len(todo) == 0 {
+				workc = nil
+			} else {
+				workItem = todo[len(todo)-1]
 			}
-			if out == 0 && len(todo) == 0 {
-				// It's safe to quit here, as long as the buffered
-				// enqueue channel isn't also readable, which might
-				// happen if the worker sends both another unit of
-				// work and its result before the other select was
-				// scheduled and both w.resc and w.enqueuec were
-				// readable.
-				select {
-				case it := <-w.enqueuec:
-					todo = append(todo, it)
-				default:
-					return nil
+			select {
+			case <-ctx.Done():
+				return ErrCanceledByContext
+			case workc <- workItem:
+				todo = todo[:len(todo)-1]
+				out++
+			case it := <-w.enqueuec:
+				todo = append(todo, it)
+			case err := <-w.resc:
+				out--
+				if err != nil {
+					return err
+				}
+				if out == 0 && len(todo) == 0 {
+					// It's safe to quit here, as long as the buffered
+					// enqueue channel isn't also readable, which might
+					// happen if the worker sends both another unit of
+					// work and its result before the other select was
+					// scheduled and both w.resc and w.enqueuec were
+					// readable.
+					select {
+					case it := <-w.enqueuec:
+						todo = append(todo, it)
+					default:
+						return nil
+					}
 				}
 			}
 		}
