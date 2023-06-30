@@ -7,7 +7,6 @@
 package fastwalk
 
 import (
-	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -23,8 +22,6 @@ var ErrTraverseLink = errors.New("fastwalk: traverse symlink, assuming target is
 // callback should not be called for any other files in the current directory.
 // Child directories will still be traversed.
 var ErrSkipFiles = errors.New("fastwalk: skip remaining files in directory")
-
-var ErrCanceledByContext = errors.New("fastwalk: canceled by context")
 
 // Walk is a faster implementation of filepath.Walk.
 //
@@ -52,10 +49,6 @@ var ErrCanceledByContext = errors.New("fastwalk: canceled by context")
 //     sentinel error. It is the walkFn's responsibility to prevent
 //     fastWalk from going into symlink cycles.
 func Walk(root string, walkFn func(path string, typ os.FileMode) error) error {
-	return WalkWithContext(context.Background(), root, walkFn)
-}
-
-func WalkWithContext(ctx context.Context, root string, walkFn func(path string, typ os.FileMode) error) error {
 	// TODO(bradfitz): make numWorkers configurable? We used a
 	// minimum of 4 to give the kernel more info about multiple
 	// things we want, in hopes its I/O scheduling can take
@@ -64,9 +57,6 @@ func WalkWithContext(ctx context.Context, root string, walkFn func(path string, 
 	numWorkers := 4
 	if n := runtime.NumCPU(); n > numWorkers {
 		numWorkers = n
-	}
-	if ctx == nil {
-		return errors.New("fastwalk: nil Context")
 	}
 
 	// Make sure to wait for all workers to finish, otherwise
@@ -93,43 +83,36 @@ func WalkWithContext(ctx context.Context, root string, walkFn func(path string, 
 	todo := []walkItem{{dir: root}}
 	out := 0
 	for {
+		workc := w.workc
+		var workItem walkItem
+		if len(todo) == 0 {
+			workc = nil
+		} else {
+			workItem = todo[len(todo)-1]
+		}
 		select {
-		case <-ctx.Done():
-			return ErrCanceledByContext
-		default:
-			workc := w.workc
-			var workItem walkItem
-			if len(todo) == 0 {
-				workc = nil
-			} else {
-				workItem = todo[len(todo)-1]
+		case workc <- workItem:
+			todo = todo[:len(todo)-1]
+			out++
+		case it := <-w.enqueuec:
+			todo = append(todo, it)
+		case err := <-w.resc:
+			out--
+			if err != nil {
+				return err
 			}
-			select {
-			case <-ctx.Done():
-				return ErrCanceledByContext
-			case workc <- workItem:
-				todo = todo[:len(todo)-1]
-				out++
-			case it := <-w.enqueuec:
-				todo = append(todo, it)
-			case err := <-w.resc:
-				out--
-				if err != nil {
-					return err
-				}
-				if out == 0 && len(todo) == 0 {
-					// It's safe to quit here, as long as the buffered
-					// enqueue channel isn't also readable, which might
-					// happen if the worker sends both another unit of
-					// work and its result before the other select was
-					// scheduled and both w.resc and w.enqueuec were
-					// readable.
-					select {
-					case it := <-w.enqueuec:
-						todo = append(todo, it)
-					default:
-						return nil
-					}
+			if out == 0 && len(todo) == 0 {
+				// It's safe to quit here, as long as the buffered
+				// enqueue channel isn't also readable, which might
+				// happen if the worker sends both another unit of
+				// work and its result before the other select was
+				// scheduled and both w.resc and w.enqueuec were
+				// readable.
+				select {
+				case it := <-w.enqueuec:
+					todo = append(todo, it)
+				default:
+					return nil
 				}
 			}
 		}

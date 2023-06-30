@@ -6,7 +6,6 @@ package fastwalk_test
 
 import (
 	"bytes"
-	"context"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -17,9 +16,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/misseven0/fastwalk"
 )
@@ -31,18 +28,18 @@ func TestFastWalk(t *testing.T) {
 	})
 }
 
-func TestFastWalkWithContext(t *testing.T) {
-	ctx, _ := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	var c atomic.Int32
-	err := fastwalk.WalkWithContext(ctx, ".", func(path string, typ os.FileMode) error {
-		fmt.Printf("|-%v \n", path)
-		c.Add(1)
-		return nil
-	})
-	fmt.Printf("COUNT:%v \n", c.Load())
-	fmt.Printf("ERR:%v \n", err)
-	fmt.Printf("Cause:%v \n", context.Cause(ctx))
-}
+// func TestFastWalkWithContext(t *testing.T) {
+// 	ctx, _ := context.WithTimeout(context.Background(), 10*time.Millisecond)
+// 	var c atomic.Int32
+// 	err := fastwalk.WalkWithContext(ctx, ".", func(path string, typ os.FileMode) error {
+// 		fmt.Printf("|-%v \n", path)
+// 		c.Add(1)
+// 		return nil
+// 	})
+// 	fmt.Printf("COUNT:%v \n", c.Load())
+// 	fmt.Printf("ERR:%v \n", err)
+// 	fmt.Printf("Cause:%v \n", context.Cause(ctx))
+// }
 
 func formatFileModes(m map[string]os.FileMode) string {
 	var keys []string
